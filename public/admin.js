@@ -472,7 +472,7 @@ function bannersPanel() {
   const banners = data.banners || []
   return `
     <div class="panel">
-      <h3>Картинки акций</h3>
+      <h3>Баннеры</h3>
       <p class="muted">Загрузите PNG или JPG — они появятся в самом верху витрины. Лучше горизонтальные, например 1200×600. До 8 МБ.</p>
       <input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp" />
       <div id="bannerStatus" class="muted" style="margin-top:8px"></div>
@@ -491,7 +491,7 @@ function bannersPanel() {
                 </div>`,
               )
               .join('')
-          : '<p class="muted">Пока нет ни одной акции.</p>'
+          : '<p class="muted">Пока нет ни одного баннера.</p>'
       }
     </div>`
 }
@@ -555,7 +555,7 @@ function render() {
       <button class="chip ${tab === 'orders' ? 'chip--active' : ''}" data-tab="orders">Заявки ${newCount ? '(' + newCount + ')' : ''}</button>
       <button class="chip ${tab === 'products' ? 'chip--active' : ''}" data-tab="products">Товары</button>
       <button class="chip ${tab === 'categories' ? 'chip--active' : ''}" data-tab="categories">Категории</button>
-      <button class="chip ${tab === 'banners' ? 'chip--active' : ''}" data-tab="banners">Акции</button>
+      <button class="chip ${tab === 'banners' ? 'chip--active' : ''}" data-tab="banners">Баннер</button>
     </div>
 
     ${

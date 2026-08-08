@@ -192,27 +192,12 @@ function navHtml(active) {
 }
 
 function footerHtml() {
-  const { shop } = state.catalog
-  const tg = String(shop.contactTelegram || '').trim()
-  const tgUser = tg.replace(/^@+/, '')
-  const tgHref = 'ht' + 'tps://t.me/' + encodeURIComponent(tgUser)
-  const rows = [
-    shop.address
-      ? `<div class="footer__row"><span class="footer__ic">◇</span><span>${escapeHtml(shop.address)}</span></div>`
-      : '',
-    shop.workingHours
-      ? `<div class="footer__row"><span class="footer__ic">○</span><span>${escapeHtml(shop.workingHours)}</span></div>`
-      : '',
-    shop.delivery
-      ? `<div class="footer__row"><span class="footer__ic">→</span><span>${escapeHtml(shop.delivery)}</span></div>`
-      : '',
-    tg
-      ? `<div class="footer__row"><span class="footer__ic">✉</span><span>Telegram для связи: <a class="footer__tg" href="${escapeHtml(tgHref)}" target="_blank" rel="noopener">@${escapeHtml(tgUser)}</a></span></div>`
-      : '',
-  ]
-    .filter(Boolean)
-    .join('')
-  return `<div class="footer">${rows}</div>`
+  const tgHref = 'ht' + 'tps://t.me/aaniiloop3'
+  return `<div class="footer">
+    <div class="footer__row"><span>г. Стерлитамак, ул. Октября 95</span></div>
+    <div class="footer__row"><span>Режим работы: с 12:00 до 20:00</span></div>
+    <div class="footer__row"><span>Telegram для связи: <a class="footer__tg" href="${tgHref}" target="_blank" rel="noopener">@aaniiloop3</a></span></div>
+  </div>`
 }
 
 function sectionTitle(text) {

@@ -731,6 +731,14 @@ const server = http.createServer(async (req, res) => {
           order.stockApplied = false
         }
 
+        // Отменённая заявка убирается из админки
+        if (order.status === 'cancelled') {
+          const idx = data.orders.findIndex((o) => o.id === order.id)
+          if (idx !== -1) data.orders.splice(idx, 1)
+          saveDb()
+          return json(res, 200, { ok: true, removed: true })
+        }
+
         // Сняли отмену — снова списываем
         if (wasCancelled && order.status !== 'cancelled' && !order.stockApplied) {
           for (const item of order.items) {
