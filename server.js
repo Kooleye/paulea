@@ -325,7 +325,10 @@ async function initDb() {
     }
   }
   readDb()
-  if (ensureSlugs(db)) saveDb()
+  // В локальном режиме дописываем slug и сохраняем. В S3-режиме сюда можно
+  // попасть только при сбое чтения из S3 — тогда НЕЛЬЗЯ перезаписывать S3
+  // локальными данными, иначе можно затереть реальные остатки.
+  if (!S3_ENABLED && ensureSlugs(db)) saveDb()
 }
 
 function readDb() {
@@ -1179,7 +1182,7 @@ async function networkSelfTest() {
       console.log(`  🌐  Сеть: ${label} → OK (HTTP ${res.status}, ${ms} мс)`)
     } catch (err) {
       const ms = Date.now() - startedAt
-      console.log(`  🌐  Сеть: ${label} → НЕТ ДОСТУПА (${err.message}, ${ms} мс)`)
+      console.log(`  🌐  Сеть: ${label} → Н��Т ДОСТУПА (${err.message}, ${ms} мс)`)
     } finally {
       clearTimeout(timer)
     }
