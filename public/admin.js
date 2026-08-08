@@ -373,19 +373,6 @@ function editorPanel() {
         </div>
         <input id="photoFile" type="file" accept="image/png,image/jpeg,image/webp" multiple />
         <div id="photoStatus" class="muted"></div>
-        ${
-          photos.length
-            ? `<p class="muted" style="margin:12px 0 6px">Или выберите из уже загруженных:</p>
-               <div class="photos">
-                 ${photos
-                   .map(
-                     (src) =>
-                       `<button type="button" class="photo photo--pick" data-img-add="${escapeHtml(src)}"><img src="${escapeHtml(src)}" alt="" /></button>`,
-                   )
-                   .join('')}
-               </div>`
-            : ''
-        }
       </div>
 
       <div class="field">
