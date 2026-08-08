@@ -32,7 +32,16 @@ async function api(path, body) {
     headers: { 'Content-Type': 'application/json', 'x-admin-password': password },
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (response.status === 401) throw new Error('unauthorized')
+  if (response.status === 401 || response.status === 429) {
+    let msg = response.status === 429 ? 'Вход временно заблокирован' : 'Неверный пароль'
+    try {
+      const j = await response.json()
+      if (j && j.error) msg = j.error
+    } catch {}
+    const err = new Error(msg)
+    err.auth = true
+    throw err
+  }
   return response.json()
 }
 
@@ -864,7 +873,7 @@ async function load() {
   } catch (err) {
     localStorage.removeItem('adminPassword')
     password = ''
-    renderLogin(err.message === 'unauthorized' ? 'Неверный пароль' : 'Сервер недоступен')
+    renderLogin(err.auth ? err.message : 'Сервер недоступен')
   }
 }
 

@@ -444,6 +444,55 @@ function isAdmin(req) {
   return req.headers['x-admin-password'] === ADMIN_PASSWORD
 }
 
+// --- Защита админки от подбора пароля ---
+// После 3 неверных попыток с одного IP вход блокируется на 12 часов.
+// Счётчик хранится в памяти и сбрасывается при перезапуске сервера.
+const ADMIN_MAX_FAILS = 3
+const ADMIN_LOCK_MS = 12 * 60 * 60 * 1000 // 12 часов
+const adminGuard = new Map() // ip -> { fails, lockUntil }
+
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for']
+  if (xff) return String(xff).split(',')[0].trim()
+  return (req.socket && req.socket.remoteAddress) || 'unknown'
+}
+
+function formatLockLeft(ms) {
+  const totalMin = Math.ceil(ms / 60000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return h > 0 ? `${h} ч ${m} мин` : `${m} мин`
+}
+
+// Заблокирован ли вход для этого IP.
+function adminLockState(req) {
+  const rec = adminGuard.get(clientIp(req))
+  if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
+    return { locked: true, retryMs: rec.lockUntil - Date.now() }
+  }
+  return { locked: false, retryMs: 0 }
+}
+
+// Успешный вход — сбрасываем счётчик неудач.
+function adminLoginSuccess(req) {
+  adminGuard.delete(clientIp(req))
+}
+
+// Неверный пароль — увеличиваем счётчик и при необходимости блокируем.
+function adminLoginFail(req) {
+  const ip = clientIp(req)
+  const rec = adminGuard.get(ip) || { fails: 0, lockUntil: 0 }
+  rec.fails += 1
+  let locked = false
+  if (rec.fails >= ADMIN_MAX_FAILS) {
+    rec.lockUntil = Date.now() + ADMIN_LOCK_MS
+    rec.fails = 0
+    locked = true
+  }
+  adminGuard.set(ip, rec)
+  return { locked, attemptsLeft: locked ? 0 : ADMIN_MAX_FAILS - rec.fails }
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -700,7 +749,24 @@ const server = http.createServer(async (req, res) => {
 
     // ------------------------------------------------------------- админка
     if (pathname.startsWith('/api/admin/')) {
-      if (!isAdmin(req)) return json(res, 401, { error: 'Неверный пароль' })
+      const lock = adminLockState(req)
+      if (lock.locked) {
+        return json(res, 429, {
+          error: `Слишком много неверных попыток. Вход в админку заблокирован на 12 часов. Попробуйте через ${formatLockLeft(lock.retryMs)}.`,
+        })
+      }
+      if (!isAdmin(req)) {
+        const r = adminLoginFail(req)
+        if (r.locked) {
+          return json(res, 429, {
+            error: 'Слишком много неверных попыток. Вход в админку заблокирован на 12 часов.',
+          })
+        }
+        return json(res, 401, {
+          error: `Неверный пароль. Осталось попыток: ${r.attemptsLeft}.`,
+        })
+      }
+      adminLoginSuccess(req)
       const data = readDb()
 
       if (pathname === '/api/admin/state' && req.method === 'GET') {
