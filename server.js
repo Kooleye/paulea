@@ -25,6 +25,11 @@ const PUBLIC_DIR = path.join(ROOT, 'public')
 const DATA_DIR = path.join(ROOT, 'data')
 const DB_PATH = path.join(DATA_DIR, 'db.json')
 
+// Версия сборки: меняется при каждом перезапуске сервера (новый деплой).
+// Подставляется к ссылкам на styles.css/app.js/admin.js, чтобы браузеры
+// и Telegram не показывали старую закешированную версию после обновления.
+const BUILD_ID = Date.now().toString(36)
+
 // ---------------------------------------------------------------- окружение
 
 function loadEnv() {
@@ -485,13 +490,39 @@ function serveStatic(req, res, pathname) {
     } else if (IMAGE_EXT.has(ext)) {
       cacheControl = 'public, max-age=86400' // картинки — сутки
     } else {
-      cacheControl = 'public, max-age=3600' // css/js — час
+      cacheControl = 'no-cache' // css/js — всегда сверяем, чтобы правки применялись сразу
     }
 
     // У браузера уже есть свежая копия — отвечаем 304 без тела.
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, { ETag: etag, 'Cache-Control': cacheControl })
       res.end()
+      return
+    }
+
+    // HTML отдаём с подстановкой версии к css/js, чтобы после обновления
+    // новые стили и скрипты подхватывались мгновенно на всех устройствах.
+    if (ext === '.html') {
+      fs.readFile(filePath, (e2, raw) => {
+        if (e2 || !raw) {
+          if (!res.writableEnded) {
+            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('Ошибка чтения страницы')
+          }
+          return
+        }
+        const html = raw
+          .toString('utf8')
+          .replace(/((?:src|href)=")(\/[^"?]+\.(?:css|js))(")/g, `$1$2?v=${BUILD_ID}$3`)
+        const body = Buffer.from(html, 'utf8')
+        res.writeHead(200, {
+          'Content-Type': mime,
+          'Cache-Control': cacheControl,
+          ETag: etag,
+          'Content-Length': body.length,
+        })
+        res.end(body)
+      })
       return
     }
 
