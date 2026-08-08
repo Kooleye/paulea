@@ -19,6 +19,8 @@
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  /* Отключаем «двойной тап для приближения». Прокрутка и пинч-зум остаются. */
+  touch-action: manipulation;
 }
 
 html,
