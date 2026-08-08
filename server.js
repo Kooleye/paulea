@@ -63,6 +63,9 @@ const MANAGER_CHAT_ID = process.env.TELEGRAM_MANAGER_CHAT_ID || ''
 const TELEGRAM_API_BASE = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '')
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'
 const ALLOW_BROWSER = String(process.env.ALLOW_BROWSER || 'true') === 'true'
+// Адрес сайта для ссылок на товар в уведомлениях менеджеру.
+// Можно переопределить через переменную окружения PUBLIC_URL.
+const PUBLIC_URL = (process.env.PUBLIC_URL || 'https://paulea.ru').replace(/\/+$/, '')
 
 // ---------------------------------------------------------------- S3-хранилище
 // Фото товаров, баннеры и база db.json могут храниться в облачном S3-хранилище
@@ -399,6 +402,10 @@ function formatOrderForManager(order) {
     lines.push(
       `• ${escapeHtml(item.title)} — размер <b>${escapeHtml(item.size)}</b> × ${item.qty} — ${item.price * item.qty} ₽`,
     )
+    if (item.productId) {
+      const link = PUBLIC_URL + '/#/p/' + encodeURIComponent(item.productId)
+      lines.push(`   <a href="${escapeHtml(link)}">🔗 Открыть товар</a>`)
+    }
   }
   lines.push('')
   lines.push(`<b>Итого: ${order.total} ₽</b>`)

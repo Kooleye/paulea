@@ -28,6 +28,9 @@ function wordmark(name) {
 }
 
 let lastRoute = null
+// Если задано (не null) — при ближайшем рендере сохраняем эту позицию экрана
+// вместо прокрутки наверх (например, при переключении цвета товара).
+let keepScrollY = null
 
 // -------------------------------------------------------------- Telegram
 
@@ -961,10 +964,13 @@ function render() {
   else renderNew()
 
   // Прокручиваем наверх только при смене экрана.
+  // При переключении цвета внутри карточки сохраняем положение экрана.
   if (hash !== lastRoute) {
-    window.scrollTo(0, 0)
+    if (keepScrollY !== null) window.scrollTo(0, keepScrollY)
+    else window.scrollTo(0, 0)
     lastRoute = hash
   }
+  keepScrollY = null
 }
 
 function go(hash) {
@@ -1069,6 +1075,8 @@ app.addEventListener('click', (event) => {
   if (target.dataset.cat) return go('/c/' + target.dataset.cat)
   if (target.dataset.open) {
     state.selectedSize = null
+    // Переключение цвета (кнопка-шватч в карточке) — не дёргаем экран наверх.
+    if (target.classList.contains('swatch')) keepScrollY = window.scrollY
     return go('/p/' + target.dataset.open)
   }
   if (target.dataset.go === 'home') return go('/')
