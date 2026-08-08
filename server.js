@@ -983,6 +983,37 @@ server.on('clientError', (err, socket) => {
   try { if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n') } catch {}
 })
 
+// Разовая проверка сети при старте: пишет в логи, есть ли доступ в интернет
+// вообще и до Telegram в частности. Ничего не блокирует и не роняет сервер.
+async function networkSelfTest() {
+  async function probe(label, url) {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 8000)
+    const startedAt = Date.now()
+    try {
+      const res = await fetch(url, { signal: ac.signal })
+      const ms = Date.now() - startedAt
+      console.log(`  🌐  Сеть: ${label} → OK (HTTP ${res.status}, ${ms} мс)`)
+    } catch (err) {
+      const ms = Date.now() - startedAt
+      console.log(`  🌐  Сеть: ${label} → НЕТ ДОСТУПА (${err.message}, ${ms} мс)`)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  console.log('')
+  console.log('  — Проверка сети (диагностика) —')
+  await probe('внешний интернет (ipify)', 'https://api.ipify.org')
+  await probe('внешний интернет (google 204)', 'https://www.google.com/generate_204')
+  if (BOT_TOKEN) {
+    await probe('Telegram API (getMe)', 'https' + '://api.telegram.org/bot' + BOT_TOKEN + '/getMe')
+  } else {
+    console.log('  🌐  Сеть: Telegram API → пропущено (нет TELEGRAM_BOT_TOKEN)')
+  }
+  console.log('  — Конец проверки сети —')
+  console.log('')
+}
+
 async function start() {
   await initDb()
   server.listen(PORT, '0.0.0.0', () => {
@@ -1004,6 +1035,7 @@ async function start() {
   }
   console.log('  Остановить: Ctrl + C')
   console.log('')
+  networkSelfTest().catch(() => {})
   })
 }
 
