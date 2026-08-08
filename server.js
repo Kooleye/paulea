@@ -52,6 +52,10 @@ loadEnv()
 const PORT = Number(process.env.PORT || 3000)
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ''
 const MANAGER_CHAT_ID = process.env.TELEGRAM_MANAGER_CHAT_ID || ''
+// Базовый адрес Telegram Bot API. По умолчанию — официальный api.telegram.org.
+// Если хостинг не пускает к Telegram напрямую, укажите свой прокси (например,
+// Cloudflare Worker) в переменной TELEGRAM_API_BASE, напр.: https://tg-proxy.ваш.workers.dev
+const TELEGRAM_API_BASE = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '')
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'
 const ALLOW_BROWSER = String(process.env.ALLOW_BROWSER || 'true') === 'true'
 
@@ -349,7 +353,7 @@ function escapeHtml(text) {
 
 async function sendTelegram(chatId, text) {
   if (!BOT_TOKEN || !chatId) return false
-  const api = 'https' + '://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage'
+  const api = TELEGRAM_API_BASE + '/bot' + BOT_TOKEN + '/sendMessage'
   // Пробуем несколько раз: иногда первый запрос из контейнера обрывается сетью.
   for (let attempt = 1; attempt <= 3; attempt++) {
     const ac = new AbortController()
@@ -1005,8 +1009,9 @@ async function networkSelfTest() {
   console.log('  — Проверка сети (диагностика) —')
   await probe('внешний интернет (ipify)', 'https://api.ipify.org')
   await probe('внешний интернет (google 204)', 'https://www.google.com/generate_204')
+  console.log(`  🌐  Сеть: используемый адрес Telegram API = ${TELEGRAM_API_BASE}`)
   if (BOT_TOKEN) {
-    await probe('Telegram API (getMe)', 'https' + '://api.telegram.org/bot' + BOT_TOKEN + '/getMe')
+    await probe('Telegram API (getMe)', TELEGRAM_API_BASE + '/bot' + BOT_TOKEN + '/getMe')
   } else {
     console.log('  🌐  Сеть: Telegram API → пропущено (нет TELEGRAM_BOT_TOKEN)')
   }
