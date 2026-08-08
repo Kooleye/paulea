@@ -902,7 +902,7 @@ body.no-scroll {
 
 .lb__bar {
   position: absolute;
-  top: max(6px, env(safe-area-inset-top));
+  top: max(24px, calc(env(safe-area-inset-top) + 18px));
   left: 0;
   right: 0;
   height: 46px;
@@ -979,23 +979,23 @@ body.no-scroll {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--gold-strong);
+  color: var(--text);
   font-size: 16px;
   letter-spacing: 0.24em;
 }
 
 .lb__num {
-  color: var(--gold-strong);
+  color: var(--text);
 }
 
 .lb__sep {
   width: 26px;
   height: 1px;
-  background: rgba(240, 211, 166, 0.85);
+  background: rgba(255, 252, 239, 0.7);
 }
 
 .lb__total {
-  color: rgba(240, 211, 166, 0.8);
+  color: rgba(255, 252, 239, 0.75);
 }
 
 /* ------------------------------------------------- описание и состав */

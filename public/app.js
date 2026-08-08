@@ -302,7 +302,9 @@ function productCard(product) {
 }
 
 function gridHtml(list, emptyText) {
-  const items = collapseGroups(list)
+  // Каждый товар — отдельной карточкой, включая все связанные цвета одной
+  // группы (раньше группа «схлопывалась» в одну карточку).
+  const items = list
   return items.length
     ? `<div class="grid">${items.map(productCard).join('')}</div>`
     : `<div class="empty">${escapeHtml(emptyText)}</div>`
