@@ -353,14 +353,18 @@ function readDb() {
 let s3SaveChain = Promise.resolve()
 
 function saveDb() {
-  // Локальная копия — быстрый кэш в пределах текущего контейнера.
-  try {
-    ensureDataDir()
-    const tmp = DB_PATH + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8')
-    fs.renameSync(tmp, DB_PATH)
-  } catch (err) {
-    console.error('Локальное сохранение db.json не удалось:', err.message)
+  // Локальная копия нужна только когда S3 не настроен. На хостингах вроде
+  // Timeweb папка /app доступна только для чтения, поэтому в режиме S3
+  // локальную запись пропускаем — постоянное хранилище это S3.
+  if (!S3_ENABLED) {
+    try {
+      ensureDataDir()
+      const tmp = DB_PATH + '.tmp'
+      fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8')
+      fs.renameSync(tmp, DB_PATH)
+    } catch (err) {
+      console.error('Локальное сохранение db.json не удалось:', err.message)
+    }
   }
   // Постоянное хранение в S3.
   if (S3_ENABLED) {
