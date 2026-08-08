@@ -13,6 +13,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const zlib = require('node:zlib')
+const dns = require('node:dns')
+
+// В некоторых контейнерах (в т.ч. на облачных платформах) IPv6 наружу не работает,
+// и обычный fetch к внешним сервисам (например, api.telegram.org) падает с «fetch failed»
+// или зависает. Принудительно ходим по IPv4 — это чинит отправку в Telegram.
+try { dns.setDefaultResultOrder('ipv4first') } catch {}
 
 const ROOT = __dirname
 const PUBLIC_DIR = path.join(ROOT, 'public')
@@ -132,11 +138,19 @@ async function s3Request(method, key, { body = '', contentType, query = '' } = {
   if (contentType) sendHeaders['content-type'] = contentType
 
   const url = S3.endpoint + canonicalUri + (query ? '?' + query : '')
-  return fetch(url, {
-    method,
-    headers: sendHeaders,
-    body: method === 'GET' || method === 'DELETE' ? undefined : payload,
-  })
+  // Таймаут, чтобы запрос к хранилищу никогда не висел вечно (иначе админка подвисает).
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), 20000)
+  try {
+    return await fetch(url, {
+      method,
+      headers: sendHeaders,
+      body: method === 'GET' || method === 'DELETE' ? undefined : payload,
+      signal: ac.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function s3Put(key, buffer, contentType) {
@@ -335,25 +349,37 @@ function escapeHtml(text) {
 
 async function sendTelegram(chatId, text) {
   if (!BOT_TOKEN || !chatId) return false
-  try {
-    const api = 'https' + '://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage'
-    const res = await fetch(api, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-    })
-    const json = await res.json()
-    if (!json.ok) console.error('Telegram API:', json.description)
-    return json.ok === true
-  } catch (err) {
-    console.error('Не удалось отправить сообщение в Telegram:', err.message)
-    return false
+  const api = 'https' + '://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage'
+  // Пробуем несколько раз: иногда первый запрос из контейнера обрывается сетью.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 10000)
+    try {
+      const res = await fetch(api, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+        signal: ac.signal,
+      })
+      const json = await res.json()
+      if (!json.ok) {
+        console.error('Telegram API:', json.description)
+        return false // сервер ответил, но отверг запрос — повтор не поможет
+      }
+      return true
+    } catch (err) {
+      console.error(`Не удалось отправить сообщение в Telegram (попытка ${attempt}/3):`, err.message)
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 500 * attempt))
+    } finally {
+      clearTimeout(timer)
+    }
   }
+  return false
 }
 
 function formatOrderForManager(order) {
@@ -622,7 +648,7 @@ async function createOrder(req, res) {
   return json(res, 200, { ok: true, number: order.number, total })
 }
 
-// ------------------------------------------------------------------- роутинг
+// ------------------------------------------------------------------- ��оутинг
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http' + '://' + req.headers.host)
