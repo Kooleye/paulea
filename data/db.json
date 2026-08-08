@@ -6,12 +6,30 @@
     "address": "",
     "workingHours": "",
     "delivery": "Доставка по всей России",
-    "lastSizeBadge": { "enabled": true, "text": "Последний размер" }
+    "lastSizeBadge": {
+      "enabled": true,
+      "text": "Последний размер"
+    }
   },
   "categories": [
-    { "id": "cat_new", "name": "Платья", "sortOrder": 1, "isActive": true },
-    { "id": "cat_top", "name": "Верх", "sortOrder": 2, "isActive": true },
-    { "id": "cat_acc", "name": "Аксессуары", "sortOrder": 3, "isActive": true }
+    {
+      "id": "cat_new",
+      "name": "Платья",
+      "sortOrder": 1,
+      "isActive": true
+    },
+    {
+      "id": "cat_top",
+      "name": "Верх",
+      "sortOrder": 2,
+      "isActive": true
+    },
+    {
+      "id": "cat_acc",
+      "name": "Аксессуары",
+      "sortOrder": 3,
+      "isActive": true
+    }
   ],
   "products": [
     {
@@ -24,15 +42,25 @@
       "oldPrice": 6490,
       "images": [],
       "variants": [
-        { "size": "S", "stock": 2 },
-        { "size": "M", "stock": 1 },
-        { "size": "L", "stock": 0 }
+        {
+          "size": "S",
+          "stock": 2
+        },
+        {
+          "size": "M",
+          "stock": 1
+        },
+        {
+          "size": "L",
+          "stock": 0
+        }
       ],
       "isActive": true,
       "isHit": true,
       "isNew": true,
       "color": null,
-      "groupId": null
+      "groupId": null,
+      "slug": "plate-primer"
     },
     {
       "id": "prd_demo2",
@@ -44,14 +72,21 @@
       "oldPrice": null,
       "images": [],
       "variants": [
-        { "size": "S", "stock": 3 },
-        { "size": "M", "stock": 3 }
+        {
+          "size": "S",
+          "stock": 3
+        },
+        {
+          "size": "M",
+          "stock": 3
+        }
       ],
       "isActive": true,
       "isHit": false,
       "isNew": true,
       "color": null,
-      "groupId": null
+      "groupId": null,
+      "slug": "bluza-primer"
     }
   ],
   "banners": [],

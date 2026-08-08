@@ -118,8 +118,11 @@ function renderCartCount() {
 
 // ------------------------------------------------------------------- данные
 
-function findProduct(id) {
-  return state.catalog.products.find((p) => p.id === id)
+function findProduct(idOrSlug) {
+  return (
+    state.catalog.products.find((p) => p.slug === idOrSlug) ||
+    state.catalog.products.find((p) => p.id === idOrSlug)
+  )
 }
 
 function money(value) {
@@ -268,7 +271,7 @@ function colorSwitcherHtml(product) {
           const active = s.id === product.id ? 'swatch--active' : ''
           const out = s.inStock === false ? 'swatch--out' : ''
           const label = (s.color && s.color.name) || 'Цвет'
-          return `<button class="swatch ${active} ${out}" data-open="${escapeHtml(s.id)}" title="${escapeHtml(label)}"><span class="swatch__dot" style="background:${escapeHtml(hex)}"></span></button>`
+          return `<button class="swatch ${active} ${out}" data-open="${escapeHtml(s.slug || s.id)}" title="${escapeHtml(label)}"><span class="swatch__dot" style="background:${escapeHtml(hex)}"></span></button>`
         })
         .join('')}
     </div>`
@@ -278,7 +281,7 @@ function productCard(product) {
   const discount = discountOf(product)
 
   return `
-    <button class="card" data-open="${product.id}">
+    <button class="card" data-open="${escapeHtml(product.slug || product.id)}">
       <div class="card__media">
         <img src="${escapeHtml(imageOf(product))}" alt="${escapeHtml(product.name)}" loading="lazy" />
         <div class="badges">
@@ -946,36 +949,40 @@ function renderDone(number) {
 // ----------------------------------------------------------------- роутинг
 
 function render() {
-  const hash = location.hash.slice(1) || '/'
-  const [, section, param] = hash.split('/')
+  const route = location.pathname || '/'
+  const [, section, param] = route.split('/')
 
-  backBtn.hidden = hash === '/'
+  backBtn.hidden = route === '/'
   if (tg && tg.BackButton) {
-    if (hash === '/') tg.BackButton.hide()
+    if (route === '/') tg.BackButton.hide()
     else tg.BackButton.show()
   }
 
   if (section === 'catalog') renderCatalogList()
   else if (section === 'sale') renderSale()
   else if (section === 'c') renderCategory(param)
-  else if (section === 'p') renderProduct(param)
+  else if (section === 'p') renderProduct(decodeURIComponent(param || ''))
   else if (section === 'cart') renderCart()
   else if (section === 'done') renderDone(decodeURIComponent(param || ''))
   else renderNew()
 
   // Прокручиваем наверх только при смене экрана.
   // При переключении цвета внутри карточки сохраняем положение экрана.
-  if (hash !== lastRoute) {
+  if (route !== lastRoute) {
     if (keepScrollY !== null) window.scrollTo(0, keepScrollY)
     else window.scrollTo(0, 0)
-    lastRoute = hash
+    lastRoute = route
   }
   keepScrollY = null
 }
 
-function go(hash) {
-  if (location.hash.slice(1) === hash || (hash === '/' && !location.hash)) render()
-  else location.hash = hash
+function go(path) {
+  if (location.pathname === path) {
+    render()
+  } else {
+    history.pushState({}, '', path)
+    render()
+  }
 }
 
 // ------------------------------------------------------------- отправка
@@ -1085,8 +1092,8 @@ app.addEventListener('click', (event) => {
   }
   if (target.dataset.size) return updateSizeSelection(target.dataset.size)
   if (target.id === 'addBtn') {
-    const productId = location.hash.split('/')[2]
-    addToCart(productId, state.selectedSize)
+    const current = findProduct(location.pathname.split('/')[2])
+    if (current) addToCart(current.id, state.selectedSize)
     if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light')
     return go('/cart')
   }
@@ -1095,8 +1102,9 @@ app.addEventListener('click', (event) => {
 
 // Название магазина всегда ведёт на главную.
 shopName.addEventListener('click', () => {
-  if (location.hash && location.hash !== '#/') location.hash = '/'
-  else {
+  if (location.pathname !== '/') {
+    go('/')
+  } else {
     render()
     window.scrollTo(0, 0)
   }
@@ -1112,7 +1120,7 @@ document.addEventListener('click', (event) => {
 
 backBtn.addEventListener('click', () => history.back())
 cartBtn.addEventListener('click', () => go('/cart'))
-window.addEventListener('hashchange', render)
+window.addEventListener('popstate', render)
 
 // ------------------------------------------------------------------- старт
 

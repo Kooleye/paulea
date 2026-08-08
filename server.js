@@ -67,6 +67,55 @@ const ALLOW_BROWSER = String(process.env.ALLOW_BROWSER || 'true') === 'true'
 // Можно переопределить через переменную окружения PUBLIC_URL.
 const PUBLIC_URL = (process.env.PUBLIC_URL || 'https://paulea.ru').replace(/\/+$/, '')
 
+// --- Красивые адреса товаров (slug) ---
+// Простейшая транслитерация кириллицы для человекочитаемых ссылок.
+const TRANSLIT = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
+  и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
+  с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh',
+  щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+}
+
+function slugify(text) {
+  const lower = String(text || '').toLowerCase()
+  let out = ''
+  for (const ch of lower) {
+    if (ch in TRANSLIT) out += TRANSLIT[ch]
+    else if (/[a-z0-9]/.test(ch)) out += ch
+    else out += '-'
+  }
+  out = out.replace(/-+/g, '-').replace(/^-|-$/g, '')
+  return out || 'tovar'
+}
+
+// Гарантирует каждому товару уникальный slug. Возвращает true, если что-то изменилось.
+function ensureSlugs(data) {
+  if (!data || !Array.isArray(data.products)) return false
+  let changed = false
+  const used = new Set()
+  for (const p of data.products) {
+    if (p.slug) used.add(p.slug)
+  }
+  for (const p of data.products) {
+    if (p.slug) continue
+    let base = slugify(p.name)
+    if (p.color && p.color.name) {
+      const c = slugify(p.color.name)
+      if (c && !base.endsWith(c)) base += '-' + c
+    }
+    let slug = base
+    let n = 2
+    while (used.has(slug)) {
+      slug = base + '-' + n
+      n++
+    }
+    used.add(slug)
+    p.slug = slug
+    changed = true
+  }
+  return changed
+}
+
 // ---------------------------------------------------------------- S3-хранилище
 // Фото товаров, баннеры и база db.json могут храниться в облачном S3-хранилище
 // (Timeweb S3 или любое S3-совместимое). Это нужно, чтобы данные НЕ пропадали
@@ -264,6 +313,11 @@ async function initDb() {
         await s3Put('db.json', Buffer.from(JSON.stringify(db, null, 2)), 'application/json; charset=utf-8')
         console.log('  ☁️   В S3 создана новая база db.json.')
       }
+      if (ensureSlugs(db)) {
+        try {
+          await s3Put('db.json', Buffer.from(JSON.stringify(db, null, 2)), 'application/json; charset=utf-8')
+        } catch {}
+      }
       return
     } catch (err) {
       console.error('  ⚠️   Не удалось прочитать базу из S3:', err.message)
@@ -271,6 +325,7 @@ async function initDb() {
     }
   }
   readDb()
+  if (ensureSlugs(db)) saveDb()
 }
 
 function readDb() {
@@ -403,7 +458,7 @@ function formatOrderForManager(order) {
       `• ${escapeHtml(item.title)} — размер <b>${escapeHtml(item.size)}</b> × ${item.qty} — ${item.price * item.qty} ₽`,
     )
     if (item.productId) {
-      const link = PUBLIC_URL + '/#/p/' + encodeURIComponent(item.productId)
+      const link = PUBLIC_URL + '/p/' + (item.slug || item.productId)
       lines.push(`   <a href="${escapeHtml(link)}">🔗 Открыть товар</a>`)
     }
   }
@@ -527,6 +582,12 @@ function serveStatic(req, res, pathname) {
   }
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) {
+      // «Красивые» адреса без # (например /p/slug, /c/id, /cart) — это
+      // клиентские маршруты SPA. Если файла нет и в пути нет расширения —
+      // отдаём index.html, чтобы приложение открылось и само показало нужный экран.
+      if (!path.extname(rel) && req.method === 'GET') {
+        return serveStatic(req, res, '/index.html')
+      }
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
       res.end('Страница не найдена')
       return
@@ -628,6 +689,7 @@ function serveStatic(req, res, pathname) {
 
 function publicCatalog() {
   const data = readDb()
+  ensureSlugs(data)
   const categories = data.categories
     .filter((c) => c.isActive !== false)
     .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -682,6 +744,7 @@ async function createOrder(req, res) {
     // Цену всегда берём из базы, а не из корзины клиента.
     resolved.push({
       productId: product.id,
+      slug: product.slug || product.id,
       title: product.name,
       size: variant.size,
       qty,
@@ -902,9 +965,13 @@ const server = http.createServer(async (req, res) => {
         }
 
         const index = data.products.findIndex((x) => x.id === clean.id)
-        if (index === -1) data.products.push(clean)
-        else data.products[index] = clean
-
+        if (index === -1) {
+          data.products.push(clean)
+        } else {
+          clean.slug = data.products[index].slug || null
+          data.products[index] = clean
+        }
+        ensureSlugs(data) // выдаём красивый адрес (slug) новым товарам
         saveDb()
         return json(res, 200, { ok: true, product: clean })
       }
