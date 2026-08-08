@@ -49,6 +49,152 @@ const MANAGER_CHAT_ID = process.env.TELEGRAM_MANAGER_CHAT_ID || ''
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'
 const ALLOW_BROWSER = String(process.env.ALLOW_BROWSER || 'true') === 'true'
 
+// ---------------------------------------------------------------- S3-хранилище
+// Фото товаров, баннеры и база db.json могут храниться в облачном S3-хранилище
+// (Timeweb S3 или любое S3-совместимое). Это нужно, чтобы данные НЕ пропадали
+// при пересборке приложения на App Platform (там контейнер пересоздаётся с нуля).
+//
+// Бакет держим ПРИВАТНЫМ: в базе есть телефоны и заявки клиентов — они не должны
+// быть доступны публично. Картинки отдаём не напрямую из S3, а через наш сервер
+// (маршруты /photos/... и /banners/...), подписывая запросы к приватному бакету.
+//
+// Если переменные S3 не заданы — всё работает по-старому, из локальных файлов.
+
+const S3 = {
+  endpoint: (process.env.S3_ENDPOINT || 'https://s3.twcstorage.ru').replace(/\/+$/, ''),
+  region: process.env.S3_REGION || 'ru-1',
+  bucket: process.env.S3_BUCKET || '',
+  accessKey: process.env.S3_ACCESS_KEY || '',
+  secretKey: process.env.S3_SECRET_KEY || '',
+}
+const S3_ENABLED = Boolean(S3.endpoint && S3.bucket && S3.accessKey && S3.secretKey)
+
+function sha256hex(data) {
+  return crypto.createHash('sha256').update(data).digest('hex')
+}
+function hmac(key, data) {
+  return crypto.createHmac('sha256', key).update(data).digest()
+}
+
+// Подпись запроса к S3 по протоколу AWS Signature V4 — без сторонних библиотек.
+async function s3Request(method, key, { body = '', contentType, query = '' } = {}) {
+  const host = new URL(S3.endpoint).host
+  const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '') // YYYYMMDDTHHMMSSZ
+  const dateStamp = amzDate.slice(0, 8)
+
+  const payload = Buffer.isBuffer(body) ? body : Buffer.from(body)
+  const payloadHash = sha256hex(payload)
+
+  const encodedKey = String(key).split('/').map(encodeURIComponent).join('/')
+  const canonicalUri = '/' + S3.bucket + '/' + encodedKey
+
+  const headers = {
+    host,
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+  }
+  if (contentType) headers['content-type'] = contentType
+
+  const sortedNames = Object.keys(headers).sort()
+  const signedHeaders = sortedNames.join(';')
+  const canonicalHeaders = sortedNames
+    .map((h) => h + ':' + String(headers[h]).trim() + '\n')
+    .join('')
+
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    query,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n')
+
+  const scope = dateStamp + '/' + S3.region + '/s3/aws4_request'
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n')
+
+  const kDate = hmac('AWS4' + S3.secretKey, dateStamp)
+  const kRegion = hmac(kDate, S3.region)
+  const kService = hmac(kRegion, 's3')
+  const kSigning = hmac(kService, 'aws4_request')
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex')
+
+  const authorization =
+    'AWS4-HMAC-SHA256 Credential=' + S3.accessKey + '/' + scope +
+    ', SignedHeaders=' + signedHeaders +
+    ', Signature=' + signature
+
+  const sendHeaders = {
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+    Authorization: authorization,
+  }
+  if (contentType) sendHeaders['content-type'] = contentType
+
+  const url = S3.endpoint + canonicalUri + (query ? '?' + query : '')
+  return fetch(url, {
+    method,
+    headers: sendHeaders,
+    body: method === 'GET' || method === 'DELETE' ? undefined : payload,
+  })
+}
+
+async function s3Put(key, buffer, contentType) {
+  const res = await s3Request('PUT', key, { body: buffer, contentType })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error('S3 PUT ' + key + ' → ' + res.status + ' ' + text.slice(0, 200))
+  }
+}
+async function s3Get(key) {
+  const res = await s3Request('GET', key)
+  if (res.status === 404 || res.status === 403) return null
+  if (!res.ok) throw new Error('S3 GET ' + key + ' → ' + res.status)
+  return Buffer.from(await res.arrayBuffer())
+}
+async function s3Delete(key) {
+  const res = await s3Request('DELETE', key)
+  if (!res.ok && res.status !== 404) throw new Error('S3 DELETE ' + key + ' → ' + res.status)
+}
+async function s3List(prefix) {
+  const res = await s3Request('GET', '', { query: 'list-type=2&prefix=' + encodeURIComponent(prefix) })
+  if (!res.ok) throw new Error('S3 LIST → ' + res.status)
+  const xml = await res.text()
+  const keys = []
+  const re = /<Key>([^<]+)<\/Key>/g
+  let m
+  while ((m = re.exec(xml))) keys.push(m[1])
+  return keys
+}
+
+// Отдаём картинку из приватного S3 через наш сервер (с кэшированием в браузере).
+// Если объекта в S3 нет — пробуем локальный файл (например, placeholder.svg).
+async function serveS3Object(req, res, pathname) {
+  const key = decodeURIComponent(pathname.replace(/^\//, ''))
+  try {
+    const s3res = await s3Request('GET', key)
+    if (!s3res.ok) return serveStatic(req, res, pathname)
+    const buf = Buffer.from(await s3res.arrayBuffer())
+    const ext = path.extname(key).toLowerCase()
+    const mime = MIME[ext] || s3res.headers.get('content-type') || 'application/octet-stream'
+    const etag = s3res.headers.get('etag') || '"' + sha256hex(buf).slice(0, 24) + '"'
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': 'public, max-age=86400' })
+      return res.end()
+    }
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Cache-Control': 'public, max-age=86400',
+      ETag: etag,
+      'Content-Length': buf.length,
+    })
+    res.end(buf)
+  } catch (err) {
+    console.error('S3 proxy:', err.message)
+    if (!res.writableEnded) res.writeHead(502).end('Storage error')
+  }
+}
+
 // ---------------------------------------------------------------- база (JSON)
 
 // Стартовая база: используется, если файла data/db.json ещё нет.
@@ -78,6 +224,29 @@ function ensureDataDir() {
 
 let db = null
 
+// Загружаем базу при старте. В режиме S3 читаем db.json из хранилища,
+// иначе — из локального файла. Вызывается один раз перед запуском сервера.
+async function initDb() {
+  if (S3_ENABLED) {
+    try {
+      const buf = await s3Get('db.json')
+      if (buf) {
+        db = JSON.parse(buf.toString('utf8'))
+        console.log('  ☁️   База загружена из S3-хранилища.')
+      } else {
+        db = defaultDb()
+        await s3Put('db.json', Buffer.from(JSON.stringify(db, null, 2)), 'application/json; charset=utf-8')
+        console.log('  ☁️   В S3 создана новая база db.json.')
+      }
+      return
+    } catch (err) {
+      console.error('  ⚠️   Не удалось прочитать базу из S3:', err.message)
+      console.error('       Работаю на локальной базе — данные могут не сохраниться между пересборками!')
+    }
+  }
+  readDb()
+}
+
 function readDb() {
   if (db) return db
   try {
@@ -96,11 +265,26 @@ function readDb() {
   return db
 }
 
+// Очередь записи в S3, чтобы сохранения не наезжали друг на друга.
+let s3SaveChain = Promise.resolve()
+
 function saveDb() {
-  ensureDataDir()
-  const tmp = DB_PATH + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8')
-  fs.renameSync(tmp, DB_PATH)
+  // Локальная копия — быстрый кэш в пределах текущего контейнера.
+  try {
+    ensureDataDir()
+    const tmp = DB_PATH + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8')
+    fs.renameSync(tmp, DB_PATH)
+  } catch (err) {
+    console.error('Локальное сохранение db.json не удалось:', err.message)
+  }
+  // Постоянное хранение в S3.
+  if (S3_ENABLED) {
+    const snapshot = Buffer.from(JSON.stringify(db, null, 2))
+    s3SaveChain = s3SaveChain
+      .then(() => s3Put('db.json', snapshot, 'application/json; charset=utf-8'))
+      .catch((err) => console.error('  ⚠️   Сохранение базы в S3 не удалось:', err.message))
+  }
 }
 
 function nextId(prefix) {
@@ -261,7 +445,7 @@ function serveStatic(req, res, pathname) {
     const mime = MIME[ext] || 'application/octet-stream'
 
     // ETag по размеру и времени изменения: браузер не скачивает файл заново,
-    // если он не менялся — это сильно ускоряет ��овторные открытия.
+    // если он не менялся — это сильно ускор��ет ��овторные открытия.
     const etag = '"' + stat.size.toString(16) + '-' + Math.round(stat.mtimeMs).toString(16) + '"'
 
     // Сколько держать файл в кэше браузера.
@@ -459,18 +643,28 @@ const server = http.createServer(async (req, res) => {
       const data = readDb()
 
       if (pathname === '/api/admin/state' && req.method === 'GET') {
+        let photos = []
+        if (S3_ENABLED) {
+          try {
+            photos = (await s3List('photos/'))
+              .filter((k) => /\.(png|jpe?g|webp)$/i.test(k))
+              .map((k) => '/' + k)
+          } catch (err) {
+            console.error('S3 list photos:', err.message)
+          }
+        } else if (fs.existsSync(path.join(PUBLIC_DIR, 'photos'))) {
+          photos = fs
+            .readdirSync(path.join(PUBLIC_DIR, 'photos'))
+            .filter((f) => /\.(png|jpe?g|webp)$/i.test(f))
+            .map((f) => '/photos/' + f)
+        }
         return json(res, 200, {
           shop: data.shop,
           categories: data.categories,
           products: data.products,
           orders: data.orders,
           banners: data.banners || [],
-          photos: fs.existsSync(path.join(PUBLIC_DIR, 'photos'))
-            ? fs
-                .readdirSync(path.join(PUBLIC_DIR, 'photos'))
-                .filter((f) => /\.(png|jpe?g|webp)$/i.test(f))
-                .map((f) => '/photos/' + f)
-            : [],
+          photos,
           telegramConfigured: Boolean(BOT_TOKEN && MANAGER_CHAT_ID),
         })
       }
@@ -583,10 +777,14 @@ const server = http.createServer(async (req, res) => {
         const buffer = Buffer.from(match[2], 'base64')
         if (buffer.length > 8 * 1024 * 1024) return json(res, 400, { error: 'Файл больше 8 МБ' })
 
+        const fileName = nextId('img') + '.' + ext
+        if (S3_ENABLED) {
+          await s3Put('photos/' + fileName, buffer, MIME['.' + ext] || 'image/' + match[1])
+          return json(res, 200, { ok: true, image: '/photos/' + fileName })
+        }
+
         const dir = path.join(PUBLIC_DIR, 'photos')
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-
-        const fileName = nextId('img') + '.' + ext
         fs.writeFileSync(path.join(dir, fileName), buffer)
         return json(res, 200, { ok: true, image: '/photos/' + fileName })
       }
@@ -601,11 +799,14 @@ const server = http.createServer(async (req, res) => {
         const buffer = Buffer.from(match[2], 'base64')
         if (buffer.length > 8 * 1024 * 1024) return json(res, 400, { error: 'Файл больше 8 МБ' })
 
-        const dir = path.join(PUBLIC_DIR, 'banners')
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-
         const fileName = nextId('bnr') + '.' + ext
-        fs.writeFileSync(path.join(dir, fileName), buffer)
+        if (S3_ENABLED) {
+          await s3Put('banners/' + fileName, buffer, MIME['.' + ext] || 'image/' + match[1])
+        } else {
+          const dir = path.join(PUBLIC_DIR, 'banners')
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+          fs.writeFileSync(path.join(dir, fileName), buffer)
+        }
 
         const banner = {
           id: nextId('ban'),
@@ -623,8 +824,12 @@ const server = http.createServer(async (req, res) => {
         const body = await readBody(req)
         const banner = (data.banners || []).find((b) => b.id === body.id)
         if (banner) {
-          const file = path.join(PUBLIC_DIR, banner.image.replace(/^\//, ''))
-          if (file.startsWith(PUBLIC_DIR) && fs.existsSync(file)) fs.unlinkSync(file)
+          if (S3_ENABLED) {
+            try { await s3Delete(banner.image.replace(/^\//, '')) } catch (err) { console.error('S3 delete:', err.message) }
+          } else {
+            const file = path.join(PUBLIC_DIR, banner.image.replace(/^\//, ''))
+            if (file.startsWith(PUBLIC_DIR) && fs.existsSync(file)) fs.unlinkSync(file)
+          }
           data.banners = data.banners.filter((b) => b.id !== body.id)
           saveDb()
         }
@@ -725,6 +930,14 @@ const server = http.createServer(async (req, res) => {
       return json(res, 404, { error: 'Неизвестный метод' })
     }
 
+    if (
+      S3_ENABLED &&
+      req.method === 'GET' &&
+      (pathname.startsWith('/photos/') || pathname.startsWith('/banners/'))
+    ) {
+      return await serveS3Object(req, res, pathname)
+    }
+
     if (req.method === 'GET') return serveStatic(req, res, pathname)
 
     res.writeHead(405).end('Method Not Allowed')
@@ -744,9 +957,15 @@ server.on('clientError', (err, socket) => {
   try { if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n') } catch {}
 })
 
-server.listen(PORT, '0.0.0.0', () => {
+async function start() {
+  await initDb()
+  server.listen(PORT, '0.0.0.0', () => {
   console.log('')
   console.log('  ✅  Витрина запущена')
+  console.log('')
+  console.log(S3_ENABLED
+    ? '      ☁️  Хранение файлов: облако S3 (переживает пересборки)'
+    : '      💾  Хранение файлов: локальный диск')
   console.log('')
   console.log(`      Магазин:  http://localhost:${PORT}`)
   console.log(`      Админка:  http://localhost:${PORT}/admin.html`)
@@ -759,4 +978,7 @@ server.listen(PORT, '0.0.0.0', () => {
   }
   console.log('  Остановить: Ctrl + C')
   console.log('')
-})
+  })
+}
+
+start()
